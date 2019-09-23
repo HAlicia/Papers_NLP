@@ -5,7 +5,7 @@ SRC_TRAIN_DATA = "./train.en"        # 源语言输入文件。
 TRG_TRAIN_DATA = "./train.zh"        # 目标语言输入文件。
 CHECKPOINT_PATH = "./seq2seq_ckpt"   # checkpoint保存路径。  
 
-HIDDEN_SIZE = 1024                   # LSTM的隐藏层规模。
+HIDDEN_SIZE = 128                   # LSTM的隐藏层规模。
 NUM_LAYERS = 2                       # 深层循环神经网络中LSTM结构的层数。
 SRC_VOCAB_SIZE = 10000               # 源语言词汇表大小。
 TRG_VOCAB_SIZE = 4000                # 目标语言词汇表大小。
