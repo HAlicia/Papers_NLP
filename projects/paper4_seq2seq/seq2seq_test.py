@@ -3,14 +3,14 @@ import codecs
 import sys
 
 # 读取checkpoint的路径。9000表示是训练程序在第9000步保存的checkpoint。
-CHECKPOINT_PATH = "./attention_ckpt-9000"
+CHECKPOINT_PATH = "./seq2seq_ckpt-9000"
 
 # 模型参数。必须与训练时的模型参数保持一致。
-HIDDEN_SIZE = 1024                          # LSTM的隐藏层规模。
-DECODER_LAYERS = 2                          # 解码器中LSTM结构的层数。
-SRC_VOCAB_SIZE = 10000                      # 源语言词汇表大小。
-TRG_VOCAB_SIZE = 4000                       # 目标语言词汇表大小。
-SHARE_EMB_AND_SOFTMAX = True                # 在Softmax层和词向量层之间共享参数。
+HIDDEN_SIZE = 128                          	# LSTM的隐藏层规模1024 改为 128。
+NUM_LAYERS = 2                             	# 深层循环神经网络中LSTM结构的层数。
+SRC_VOCAB_SIZE = 10000                   	# 源语言词汇表大小。
+TRG_VOCAB_SIZE = 4000                    	# 目标语言词汇表大小。
+SHARE_EMB_AND_SOFTMAX = True            	# 在Softmax层和词向量层之间共享参数。
 
 # 词汇表文件
 SRC_VOCAB = "./en.vocab"
@@ -26,11 +26,12 @@ class NMTModel(object):
     # 在模型的初始化函数中定义模型要用到的变量。
     def __init__(self):
         # 定义编码器和解码器所使用的LSTM结构。
-        self.enc_cell_fw = tf.nn.rnn_cell.BasicLSTMCell(HIDDEN_SIZE)
-        self.enc_cell_bw = tf.nn.rnn_cell.BasicLSTMCell(HIDDEN_SIZE)
+        self.enc_cell = tf.nn.rnn_cell.MultiRNNCell(
+          [tf.nn.rnn_cell.BasicLSTMCell(HIDDEN_SIZE)
+           for _ in range(NUM_LAYERS)])
         self.dec_cell = tf.nn.rnn_cell.MultiRNNCell(
           [tf.nn.rnn_cell.BasicLSTMCell(HIDDEN_SIZE) 
-           for _ in range(DECODER_LAYERS)])
+           for _ in range(NUM_LAYERS)])
 
         # 为源语言和目标语言分别定义词向量。   
         self.src_embedding = tf.get_variable(
@@ -54,40 +55,23 @@ class NMTModel(object):
         src_input = tf.convert_to_tensor([src_input], dtype=tf.int32)
         src_emb = tf.nn.embedding_lookup(self.src_embedding, src_input)
 
+        # 使用dynamic_rnn构造编码器。这一步与训练时相同。
         with tf.variable_scope("encoder"):
-            # 使用bidirectional_dynamic_rnn构造编码器。这一步与训练时相同。
-            enc_outputs, enc_state = tf.nn.bidirectional_dynamic_rnn(
-                self.enc_cell_fw, self.enc_cell_bw, src_emb, src_size, 
-                dtype=tf.float32)
-            # 将两个LSTM的输出拼接为一个张量。
-            enc_outputs = tf.concat([enc_outputs[0], enc_outputs[1]], -1)    
-        
-        with tf.variable_scope("decoder"):
-            # 定义解码器使用的注意力机制。
-            attention_mechanism = tf.contrib.seq2seq.BahdanauAttention(
-                HIDDEN_SIZE, enc_outputs,
-                memory_sequence_length=src_size)
-
-            # 将解码器的循环神经网络self.dec_cell和注意力一起封装成更高层的循环神经网络。
-            attention_cell = tf.contrib.seq2seq.AttentionWrapper(
-                self.dec_cell, attention_mechanism,
-                attention_layer_size=HIDDEN_SIZE)
+            enc_outputs, enc_state = tf.nn.dynamic_rnn(
+                self.enc_cell, src_emb, src_size, dtype=tf.float32)
    
         # 设置解码的最大步数。这是为了避免在极端情况出现无限循环的问题。
         MAX_DEC_LEN=100
 
-        with tf.variable_scope("decoder/rnn/attention_wrapper"):
+        with tf.variable_scope("decoder/rnn/multi_rnn_cell"):
             # 使用一个变长的TensorArray来存储生成的句子。
             init_array = tf.TensorArray(dtype=tf.int32, size=0,
                 dynamic_size=True, clear_after_read=False)
             # 填入第一个单词<sos>作为解码器的输入。
             init_array = init_array.write(0, SOS_ID)
-            # 调用attention_cell.zero_state构建初始的循环状态。循环状态包含
-            # 循环神经网络的隐藏状态，保存生成句子的TensorArray，以及记录解码
-            # 步数的一个整数step。
-            init_loop_var = (
-                attention_cell.zero_state(batch_size=1, dtype=tf.float32),
-                init_array, 0)
+            # 构建初始的循环状态。循环状态包含循环神经网络的隐藏状态，保存生成句子的
+            # TensorArray，以及记录解码步数的一个整数step。
+            init_loop_var = (enc_state, init_array, 0)
 
             # tf.while_loop的循环条件：
             # 循环直到解码器输出<eos>，或者达到最大步数为止。
@@ -101,8 +85,8 @@ class NMTModel(object):
                 trg_input = [trg_ids.read(step)]
                 trg_emb = tf.nn.embedding_lookup(self.trg_embedding,
                                                  trg_input)
-                # 调用attention_cell向前计算一步。
-                dec_outputs, next_state = attention_cell.call(
+                # 这里不使用dynamic_rnn，而是直接调用dec_cell向前计算一步。
+                dec_outputs, next_state = self.dec_cell.call(
                     state=state, inputs=trg_emb)
                 # 计算每个可能的输出单词对应的logit，并选取logit值最大的单词作为
                 # 这一步的而输出。
@@ -152,7 +136,7 @@ def main():
     output_text = ''.join([trg_vocab[x] for x in output_ids])
     
     # 输出翻译结果。
-    print(output_text.encode('utf8').decode(sys.stdout.encoding))
+    print(output_text.encode('gbk').decode(sys.stdout.encoding))
     sess.close()
 
 if __name__ == "__main__":
